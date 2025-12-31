@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.env/
+
+# App runtime config
+monitor_config.json
+
+# OS files
+.DS_Store
+Thumbs.db
