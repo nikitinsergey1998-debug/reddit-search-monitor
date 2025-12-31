@@ -166,6 +166,45 @@ class RedditApp(QWidget):
 
         time_limit = datetime.now(timezone.utc) - delta
 
+        handled = False  # ← ключевой фикс
+
+        # ===== FIX: ключевые слова БЕЗ сабреддитов =====
+        if query and not subs:
+            global_data = safe_fetch_json(
+                "https://www.reddit.com/search.json",
+                {
+                    "q": query,
+                    "sort": "new",
+                    "limit": 100
+                }
+            )
+            if global_data:
+                for item in global_data["data"]["children"]:
+                    post = item["data"]
+
+                    post_time = datetime.fromtimestamp(
+                        post["created_utc"], tz=timezone.utc
+                    )
+                    if post_time < time_limit:
+                        continue
+
+                    if self.is_blacklisted_post(post):
+                        continue
+
+                    self.add_row(
+                        self.search_table,
+                        post["title"],
+                        post["subreddit"],
+                        post_time,
+                        "https://www.reddit.com" + post["permalink"]
+                    )
+                handled = True
+        # ===== КОНЕЦ FIX =====
+
+        # ===== ОРИГИНАЛЬНЫЙ ПОИСК ПО САБАМ (НЕ ТРОНУТ) =====
+        if handled:
+            return
+
         for sub in subs:
             if query:
                 url = f"https://www.reddit.com/r/{sub}/search.json"
@@ -173,7 +212,6 @@ class RedditApp(QWidget):
                     "q": query,
                     "restrict_sr": 1,
                     "sort": "new",
-                    "t": self.time_unit.currentText(),
                     "limit": 100
                 }
             else:
@@ -204,7 +242,7 @@ class RedditApp(QWidget):
                     "https://www.reddit.com" + post["permalink"]
                 )
 
-    # ---------- MONITOR TAB (DISCOVER SUBREDDITS) ----------
+    # ---------- MONITOR TAB ----------
     def init_monitor_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
