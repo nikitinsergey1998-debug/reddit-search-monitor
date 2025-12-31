@@ -4,7 +4,6 @@ import webbrowser
 import traceback
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from urllib.parse import quote_plus
 
 import requests
 import feedparser
@@ -30,7 +29,7 @@ CONFIG_FILE = BASE_DIR / "monitor_config.json"
 
 # ================= HTTP =================
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 reddit-monitor-no-api/2.0"
+    "User-Agent": "Mozilla/5.0 reddit-monitor-no-api/2.3"
 }
 
 def safe_fetch_json(url, params=None):
@@ -65,7 +64,6 @@ class RedditApp(QWidget):
         self.resize(1150, 700)
 
         self.config = load_config()
-        self.seen_ids = set()
 
         self.tabs = QTabWidget()
         self.init_search_tab()
@@ -166,25 +164,52 @@ class RedditApp(QWidget):
 
         time_limit = datetime.now(timezone.utc) - delta
 
-        handled = False  # ← ключевой фикс
+        # ===== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ =====
+        targets = subs if subs else [None]
 
-        # ===== FIX: ключевые слова БЕЗ сабреддитов =====
-        if query and not subs:
-            global_data = safe_fetch_json(
-                "https://www.reddit.com/search.json",
-                {
-                    "q": query,
-                    "sort": "new",
-                    "limit": 100
-                }
-            )
-            if global_data:
-                for item in global_data["data"]["children"]:
-                    post = item["data"]
+        for sub in targets:
+            if query:
+                if sub:
+                    url = f"https://www.reddit.com/r/{sub}/search.json"
+                    params = {
+                        "q": query,
+                        "restrict_sr": 1,
+                        "sort": "new",
+                        "limit": 100
+                    }
+                else:
+                    url = "https://www.reddit.com/search.json"
+                    params = {
+                        "q": query,
+                        "sort": "new",
+                        "limit": 100
+                    }
+            else:
+                if not sub:
+                    continue
+                url = f"https://www.reddit.com/r/{sub}/new.json"
+                params = {"limit": 100}
 
+            after = None
+
+            while True:
+                if after:
+                    params["after"] = after
+
+                data = safe_fetch_json(url, params)
+                if not data:
+                    break
+
+                posts = data.get("data", {}).get("children", [])
+                if not posts:
+                    break
+
+                for item in posts:
+                    post = item.get("data", {})
                     post_time = datetime.fromtimestamp(
-                        post["created_utc"], tz=timezone.utc
+                        post.get("created_utc", 0), tz=timezone.utc
                     )
+
                     if post_time < time_limit:
                         continue
 
@@ -193,54 +218,15 @@ class RedditApp(QWidget):
 
                     self.add_row(
                         self.search_table,
-                        post["title"],
-                        post["subreddit"],
+                        post.get("title", ""),
+                        post.get("subreddit", ""),
                         post_time,
-                        "https://www.reddit.com" + post["permalink"]
+                        "https://www.reddit.com" + post.get("permalink", "")
                     )
-                handled = True
-        # ===== КОНЕЦ FIX =====
 
-        # ===== ОРИГИНАЛЬНЫЙ ПОИСК ПО САБАМ (НЕ ТРОНУТ) =====
-        if handled:
-            return
-
-        for sub in subs:
-            if query:
-                url = f"https://www.reddit.com/r/{sub}/search.json"
-                params = {
-                    "q": query,
-                    "restrict_sr": 1,
-                    "sort": "new",
-                    "limit": 100
-                }
-            else:
-                url = f"https://www.reddit.com/r/{sub}/new.json"
-                params = {"limit": 100}
-
-            data = safe_fetch_json(url, params)
-            if not data:
-                continue
-
-            for item in data["data"]["children"]:
-                post = item["data"]
-
-                post_time = datetime.fromtimestamp(
-                    post["created_utc"], tz=timezone.utc
-                )
-                if post_time < time_limit:
-                    continue
-
-                if self.is_blacklisted_post(post):
-                    continue
-
-                self.add_row(
-                    self.search_table,
-                    post["title"],
-                    post["subreddit"],
-                    post_time,
-                    "https://www.reddit.com" + post["permalink"]
-                )
+                after = data.get("data", {}).get("after")
+                if not after:
+                    break
 
     # ---------- MONITOR TAB ----------
     def init_monitor_tab(self):
@@ -273,7 +259,7 @@ class RedditApp(QWidget):
             url = "https://www.reddit.com/subreddits/search.json"
             params = {
                 "q": key,
-                "limit": 25,
+                "limit": 50,
                 "sort": "new"
             }
 
@@ -281,8 +267,8 @@ class RedditApp(QWidget):
             if not data:
                 continue
 
-            for item in data["data"]["children"]:
-                sub = item["data"]
+            for item in data.get("data", {}).get("children", []):
+                sub = item.get("data", {})
                 name = sub.get("display_name", "")
                 if not name or name.lower() in seen:
                     continue
